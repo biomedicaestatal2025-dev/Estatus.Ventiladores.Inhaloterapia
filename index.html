@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IMSS-BIENESTAR · Ventiladores</title>
+  <!-- Tailwind vía CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF para reporte PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- SheetJS para leer Excel/CSV -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.3/dist/xlsx.full.min.js"></script>
+  <!-- Tipografías (libres) -->
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&family=Libre+Baskerville:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root{ --color-guinda:#9D2449; --color-verde:#006341; --color-oro:#B08D57; }
+    body{font-family: Montserrat, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
+    h1,h2,h3{font-family: "Libre Baskerville", Georgia, serif}
+    .badge{padding:.125rem .5rem;border-radius:9999px;font-size:.75rem;color:white}
+    .ok{background:#10B981}.down{background:#EF4444}.diag{background:#F59E0B}
+    .pill{padding:.25rem .5rem;border-radius:9999px;font-size:.75rem}
+    .mono{font-family: ui-monospace,Menlo,Consolas,monospace}
+    .btn-primary{background:var(--color-guinda);color:#fff}
+    .btn-secondary{background:var(--color-verde);color:#fff}
+    .title-accent{color:var(--color-guinda)}
+    .border-accent{border-color:var(--color-verde)}
+  </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+  <div class="max-w-7xl mx-auto p-4 md:p-8">
+    <!-- Encabezado con logos -->
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div class="flex items-center gap-4">
+        <img src="/logos/gobmx.png" alt="Gobierno de México" class="h-12 hidden md:block"/>
+        <img src="/logos/imss-bienestar.png" alt="IMSS-BIENESTAR" class="h-12"/>
+      </div>
+      <div class="text-right">
+        <h1 class="text-2xl font-semibold title-accent">Panel de Ventiladores Mecánicos</h1>
+        <p class="text-sm text-gray-600">Seguimiento para 19 hospitales • <span id="connBadge" class="pill bg-gray-200">verificando conexión…</span></p>
+      </div>
+    </header>
+
+    <!-- Barra de sesión / conexión -->
+    <section class="bg-white rounded-xl shadow p-4 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div class="text-sm">
+        <div id="authState">Modo local sin sesión.</div>
+        <div class="text-xs text-gray-500">Cada hospital podrá editar solo su información cuando esté en línea (vía Firebase). En modo local puedes probar todo sin internet.</div>
+      </div>
+      <div class="flex gap-2 items-center" id="authBox">
+        <input id="email" type="email" placeholder="correo@hospital.mx" class="border rounded px-3 py-2 text-sm"/>
+        <input id="password" type="password" placeholder="Contraseña" class="border rounded px-3 py-2 text-sm"/>
+        <button id="btnLogin" class="px-3 py-2 rounded btn-secondary">Entrar</button>
+        <button id="btnLogout" class="px-3 py-2 border rounded hidden">Salir</button>
+        <button id="btnSync" class="px-3 py-2 rounded btn-primary hidden">Sincronizar cola</button>
+      </div>
+    </section>
+
+    <!-- Filtros -->
+    <section class="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
+      <div class="bg-white rounded-xl shadow p-4">
+        <label class="text-sm text-gray-500">Hospital</label>
+        <select id="hospitalSelect" class="mt-2 w-full border rounded px-3 py-2 text-sm"></select>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <label class="text-sm text-gray-500">Estatus</label>
+        <select id="statusFilter" class="mt-2 w-full border rounded px-3 py-2 text-sm">
+          <option value="">Todos</option>
+          <option>Operativo</option>
+          <option>No funcional</option>
+          <option>En diagnóstico</option>
+        </select>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <label class="text-sm text-gray-500">Búsqueda</label>
+        <input id="search" class="mt-2 w-full border rounded px-3 py-2 text-sm" placeholder="marca, modelo, serie..."/>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4 flex items-end justify-between gap-2">
+        <button id="btnNew" class="px-3 py-2 rounded btn-primary">Agregar ventilador</button>
+        <button id="btnExport" class="px-3 py-2 border rounded">Exportar CSV</button>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4 flex flex-col gap-2">
+        <label class="text-sm text-gray-500">Importar Excel/CSV</label>
+        <input id="fileExcel" type="file" accept=".xlsx,.xls,.csv" class="text-sm"/>
+        <div class="flex gap-2">
+          <button id="btnImport" class="px-3 py-2 rounded btn-secondary">Importar</button>
+          <button id="btnTemplate" class="px-3 py-2 border rounded">Descargar plantilla</button>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4 flex items-end justify-between gap-2">
+        <button id="btnPdf" class="px-3 py-2 rounded btn-secondary w-full">Reporte PDF (hospital)</button>
+      </div>
+    </section>
+
+    <!-- Resumen -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" id="summary"></section>
+
+    <!-- Tabla -->
+    <section class="bg-white rounded-xl shadow overflow-x-auto border border-accent">
+      <table class="min-w-full text-sm" id="table">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="text-left p-3">ID</th>
+            <th class="text-left p-3">Marca</th>
+            <th class="text-left p-3">Modelo</th>
+            <th class="text-left p-3">Serie</th>
+            <th class="text-left p-3">Hospital</th>
+            <th class="text-left p-3">Estatus</th>
+            <th class="text-left p-3">Diagnóstico</th>
+            <th class="text-right p-3">Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </section>
+
+    <!-- Modal -->
+    <div id="modal" class="fixed inset-0 bg-black/40 hidden items-center justify-center p-4">
+      <div class="bg-white rounded-xl shadow max-w-2xl w-full p-6">
+        <h3 class="text-lg font-semibold" id="modalTitle">Ventilador</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label class="text-xs text-gray-500">ID</label>
+            <input id="f_id" class="w-full border rounded px-3 py-2 text-sm"/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Hospital <span id="moveHelp" class="text-amber-700"></span></label>
+            <select id="f_hospitalId" class="w-full border rounded px-3 py-2 text-sm"></select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Marca</label>
+            <input id="f_marca" class="w-full border rounded px-3 py-2 text-sm"/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Modelo</label>
+            <input id="f_modelo" class="w-full border rounded px-3 py-2 text-sm"/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Serie</label>
+            <input id="f_serial" class="w-full border rounded px-3 py-2 text-sm"/>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500">Estatus</label>
+            <select id="f_status" class="w-full border rounded px-3 py-2 text-sm">
+              <option>Operativo</option>
+              <option>No funcional</option>
+              <option>En diagnóstico</option>
+            </select>
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-xs text-gray-500">Diagnóstico / Nota</label>
+            <textarea id="f_diagnosis" rows="3" class="w-full border rounded px-3 py-2 text-sm"></textarea>
+          </div>
+        </div>
+        <div class="mt-6 flex justify-end gap-2">
+          <button id="btnDelete" class="px-4 py-2 border rounded">Eliminar</button>
+          <button id="btnCancel" class="px-4 py-2 border rounded">Cancelar</button>
+          <button id="btnSave" class="px-4 py-2 rounded btn-secondary">Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel de pruebas -->
+    <details class="mt-8 bg-white rounded-xl shadow p-4" id="testsPanel">
+      <summary class="cursor-pointer font-medium">Pruebas automáticas (clic para ver)</summary>
+      <div id="testsOut" class="mt-3 text-sm mono whitespace-pre-wrap"></div>
+      <div class="mt-3 text-xs text-gray-500">Estas pruebas verifican filtros, altas/bajas, modo sin conexión, reubicación solo-Admin y el importador.</div>
+      <div class="mt-3"><button id="btnRunTests" class="px-3 py-2 border rounded">Ejecutar pruebas</button></div>
+    </details>
+  </div>
+
+  <!-- App (con soporte offline y Firebase opcional) -->
+  <script type="module">
+    // ============================
+    // CONFIGURACIÓN
+    // ============================
+    const firebaseConfig = { apiKey:"TU_API_KEY", authDomain:"TU_PROYECTO.firebaseapp.com", projectId:"TU_PROYECTO", storageBucket:"TU_PROYECTO.appspot.com", messagingSenderId:"", appId:"" };
+    const FIREBASE_VERSION = '10.13.1';
+
+    const $ = (id)=>document.getElementById(id);
+    const tbody = $("tbody");
+    const summary = $("summary");
+    const hospitalSelect = $("hospitalSelect");
+    const connBadge = $("connBadge");
+
+    let hospitals = {};   // {id: name}
+    let ventilators = []; // [{id, hospitalId, marca, modelo, serial, status, diagnosis}]
+    let currentUser = null;
+    let userMeta = { role:'admin', hospitalId:null }; // por defecto admin en modo local
+
+    // Storage local
+    const LS = { HOSP:'vent_hospitals', VENT:'vent_ventilators', QUEUE:'vent_queue', USERMETA:'vent_user_meta' };
+
+    // ============================
+    // GENERADOR DE IDS (antes faltaba y causaba ReferenceError)
+    // ============================
+    function generateId(data){
+      // Prefijo por hospital (HXX) + secuencia de 4 dígitos, p.ej. H01-0004
+      const hosp = (data?.hospitalId || 'HXX').toString().toUpperCase();
+      let list = [];
+      try{
+        list = offlineMode ? JSON.parse(localStorage.getItem(LS.VENT)||'[]') : ventilators;
+      }catch{ list = ventilators; }
+      const re = new RegExp(`^${hosp}-([0-9]{4,})$`);
+      let max = 0;
+      for(const v of list){
+        if(v.hospitalId === hosp){
+          const m = String(v.id||'').match(re);
+          if(m){ const n = parseInt(m[1],10); if(!Number.isNaN(n) && n>max) max = n; }
+        }
+      }
+      let candidate = `${hosp}-${String(max+1).padStart(4,'0')}`;
+      if(list.some(v=> v.id === candidate)){
+        // Respaldo ante colisión
+        if(typeof crypto !== 'undefined' && crypto.randomUUID){
+          candidate = `${hosp}-${crypto.randomUUID().slice(0,8)}`;
+        } else {
+          candidate = `${hosp}-${Date.now().toString().slice(-8)}`;
+        }
+      }
+      return candidate;
+    }
+
+    function hasFirebaseKeys(cfg){ return cfg.apiKey && !cfg.apiKey.startsWith('TU_') && cfg.projectId && !cfg.projectId.includes('TU_'); }
+    let offlineMode = !navigator.onLine || !hasFirebaseKeys(firebaseConfig);
+    updateConnBadge();
+    window.addEventListener('online', ()=>{ offlineMode = !hasFirebaseKeys(firebaseConfig) ? true : false; updateConnBadge(); });
+    window.addEventListener('offline', ()=>{ offlineMode = true; updateConnBadge(); });
+
+    function updateConnBadge(){
+      if(offlineMode){ connBadge.textContent='sin conexión (modo local)'; connBadge.className='pill bg-amber-200 text-amber-900'; $("authState").innerHTML='Modo local <strong>(admin por defecto)</strong>.'; $("authBox").classList.add('opacity-60','pointer-events-none'); $("btnSync").classList.add('hidden'); localStorage.setItem(LS.USERMETA, JSON.stringify(userMeta)); }
+      else { connBadge.textContent='en línea'; connBadge.className='pill bg-emerald-200 text-emerald-900'; $("authBox").classList.remove('opacity-60','pointer-events-none'); $("btnSync").classList.toggle('hidden', queueCount()===0); }
+    }
+
+    const store = {
+      async init(){ if(offlineMode) return; try{ const [{ initializeApp }, { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }, { getFirestore, collection, doc, setDoc, getDocs, getDoc, onSnapshot, deleteDoc }] = await Promise.all([ import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-app.js`), import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-auth.js`), import(`https://www.gstatic.com/firebasejs/${FIREBASE_VERSION}/firebase-firestore.js`) ]); this.fb={ initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, getFirestore, collection, doc, setDoc, getDocs, getDoc, onSnapshot, deleteDoc }; this.app=initializeApp(firebaseConfig); this.auth=getAuth(this.app); this.db=getFirestore(this.app); onAuthStateChanged(this.auth, async (user)=>{ currentUser=user; if(user){ $("authState").innerHTML=`Sesión iniciada: <strong>${user.email}</strong>`; $("btnLogout").classList.remove('hidden'); try{ const { getDoc, doc }=this.fb; const snap = await getDoc(doc(this.db,'users', user.uid)); userMeta = snap.exists()? (snap.data()) : { role:'hospital', hospitalId:null }; }catch(e){ userMeta = { role:'hospital', hospitalId:null }; } } else { $("authState").textContent='No has iniciado sesión.'; $("btnLogout").classList.add('hidden'); userMeta={ role:'hospital', hospitalId:null }; } updateMovePermissionUI(); }); }catch(e){ console.warn('No se pudo cargar Firebase, usando modo local.', e); offlineMode=true; updateConnBadge(); } },
+      async loadHospitals(){ if(offlineMode){ hospitals=JSON.parse(localStorage.getItem(LS.HOSP)||'{}'); renderHospitalsOptions(); return;} try{ const { getDocs, collection }=this.fb; const snap = await getDocs(collection(this.db,'hospitals')); hospitals={}; snap.forEach(d=> hospitals[d.id]=d.data().name); renderHospitalsOptions(); }catch(e){ console.warn('Hospitals load error, fallback local:',e); offlineMode=true; updateConnBadge(); await this.loadHospitals(); } },
+      subscribeVentilators(cb){ if(offlineMode){ ventilators = JSON.parse(localStorage.getItem(LS.VENT) || '[]'); cb(ventilators); window.addEventListener('storage', ()=>{ ventilators = JSON.parse(localStorage.getItem(LS.VENT) || '[]'); cb(ventilators); }); return ()=>{}; } const { onSnapshot, collection }=this.fb; const unsub = onSnapshot(collection(this.db,'ventilators'), (snapshot)=>{ ventilators = snapshot.docs.map(d=>({ id:d.id, ...d.data() })); cb(ventilators); }, (err)=>{ console.warn('Snapshot error, switching to local:', err); offlineMode=true; updateConnBadge(); this.subscribeVentilators(cb); }); return unsub; },
+      getVent(id){ return ventilators.find(v=>v.id===id); },
+      async saveVent(id,data){ const original = id ? this.getVent(id) : null; const moving = original && original.hospitalId !== data.hospitalId; if(moving && userMeta.role!=='admin'){ alert('Solo Admin puede reubicar equipos (cambiar hospital).'); data.hospitalId = original.hospitalId; }
+        if(offlineMode){ if(!id) id=generateId(data); const list=JSON.parse(localStorage.getItem(LS.VENT)||'[]'); const idx=list.findIndex(x=>x.id===id); const saved={ id, ...data }; if(idx>=0) list[idx]=saved; else list.push(saved); localStorage.setItem(LS.VENT, JSON.stringify(list)); enqueue({op:'upsert', id, data}); render(); return id; }
+        const { setDoc, doc }=this.fb; if(!id) id=generateId(data); await setDoc(doc(this.db,'ventilators', id), data); return id; },
+      async deleteVent(id){ if(offlineMode){ const list = JSON.parse(localStorage.getItem(LS.VENT)||'[]').filter(x=>x.id!==id); localStorage.setItem(LS.VENT, JSON.stringify(list)); enqueue({op:'delete', id}); render(); return; } const { deleteDoc, doc }=this.fb; await deleteDoc(doc(this.db,'ventilators', id)); },
+      async login(email,password){ if(offlineMode){ alert('Modo local: no requiere inicio de sesión.'); return;} const { signInWithEmailAndPassword }=this.fb; await signInWithEmailAndPassword(this.auth,email,password); },
+      async logout(){ if(offlineMode) return; const { signOut }=this.fb; await signOut(this.auth); }
+    };
+
+    function updateMovePermissionUI(){ const isAdmin = userMeta?.role==='admin' || offlineMode; $("f_hospitalId").disabled = !isAdmin; $("moveHelp").textContent = isAdmin? '' : '(solo Admin puede cambiar)'; }
+
+    function enqueue(item){ const q=JSON.parse(localStorage.getItem(LS.QUEUE)||'[]'); q.push({time:Date.now(), ...item}); localStorage.setItem(LS.QUEUE, JSON.stringify(q)); $("btnSync").classList.toggle('hidden', q.length===0 || offlineMode); }
+    function queueCount(){ return JSON.parse(localStorage.getItem(LS.QUEUE)||'[]').length; }
+    async function flushQueue(){ if(offlineMode) return alert('Sigue sin conexión.'); const q=JSON.parse(localStorage.getItem(LS.QUEUE)||'[]'); if(!q.length) return alert('No hay pendientes.'); for(const item of q){ if(item.op==='upsert') await store.saveVent(item.id,item.data); if(item.op==='delete') await store.deleteVent(item.id);} localStorage.setItem(LS.QUEUE,'[]'); alert('Cola sincronizada.'); $("btnSync").classList.add('hidden'); }
+
+    // Eventos UI
+    $("btnLogin").onclick = async ()=>{ try{ await store.login($("email").value.trim(), $("password").value.trim()); } catch(e){ alert('Error de acceso: '+e.message); } };
+    $("btnLogout").onclick = ()=> store.logout();
+    $("btnSync").onclick = ()=> flushQueue();
+    $("btnImport").onclick = handleImport;
+    $("btnTemplate").onclick = downloadTemplate;
+
+    await store.init();
+    await store.loadHospitals();
+    const unsub = store.subscribeVentilators(()=> render());
+
+    function renderHospitalsOptions(){ const options=['<option value="">Todos</option>']; const modalOptions=[]; Object.entries(hospitals).forEach(([id,name])=>{ options.push(`<option value="${id}">${name}</option>`); modalOptions.push(`<option value="${id}">${name}</option>`); }); hospitalSelect.innerHTML=options.join(''); $("f_hospitalId").innerHTML=modalOptions.join(''); }
+
+    function render(){ const q=$("search").value.trim().toLowerCase(); const fStatus=$("statusFilter").value; const fHosp=$("hospitalSelect").value; const rows=[]; let total=0,ok=0,down=0,diag=0; ventilators.filter(v=>!fHosp||v.hospitalId===fHosp).filter(v=>!fStatus||v.status===fStatus).filter(v=>!q||((v.id||'').toLowerCase().includes(q)||(v.marca||'').toLowerCase().includes(q)||(v.modelo||'').toLowerCase().includes(q)||(v.serial||'').toLowerCase().includes(q)||(v.diagnosis||'').toLowerCase().includes(q)||(hospitals[v.hospitalId]||'').toLowerCase().includes(q))).sort((a,b)=>(hospitals[a.hospitalId]||'').localeCompare(hospitals[b.hospitalId]||'')).forEach(v=>{ total++; if(v.status==='Operativo') ok++; else if(v.status==='No funcional') down++; else if(v.status==='En diagnóstico') diag++; rows.push(`<tr class="border-b"><td class="p-3">${v.id}</td><td class="p-3">${v.marca||''}</td><td class="p-3">${v.modelo||''}</td><td class="p-3">${v.serial||''}</td><td class="p-3">${hospitals[v.hospitalId]||v.hospitalId}</td><td class="p-3">${badge(v.status)}</td><td class="p-3">${v.diagnosis||'—'}</td><td class="p-3 text-right"><button class="px-2 py-1 border rounded" onclick="window.editVent('${v.id}')">Editar</button></td></tr>`); }); tbody.innerHTML = rows.join('') || `<tr><td colspan="8" class="p-6 text-center text-gray-500">Sin registros</td></tr>`; summary.innerHTML = `<div class="bg-white rounded-xl shadow p-4"><div class="text-sm text-gray-500">Total equipos</div><div class="text-2xl font-semibold">${total}</div></div><div class="bg-white rounded-xl shadow p-4"><div class="text-sm text-gray-500">Operativos</div><div class="text-2xl font-semibold">${ok}</div></div><div class="bg-white rounded-xl shadow p-4"><div class="text-sm text-gray-500">No funcionales / En diag.</div><div class="text-2xl font-semibold">${down} / ${diag}</div></div>`; }
+
+    function badge(status){ if(status==='Operativo') return `<span class="badge ok">Operativo</span>`; if(status==='No funcional') return `<span class="badge down">No funcional</span>`; if(status==='En diagnóstico') return `<span class="badge diag">En diagnóstico</span>`; return `<span class="badge" style="background:#6B7280">${status||'—'}</span>`; }
+    ["search","statusFilter","hospitalSelect"].forEach(id=> $(id).addEventListener('input', render));
+
+    window.editVent = (id)=>{ const v = id? store.getVent(id) : null; $("modal").classList.remove('hidden'); $("modal").classList.add('flex'); $("modalTitle").textContent = id? `Editar ventilador — ${id}` : 'Nuevo ventilador'; if(v){ $("f_id").value=v.id; $("f_hospitalId").value=v.hospitalId||''; $("f_marca").value=v.marca||''; $("f_modelo").value=v.modelo||''; $("f_serial").value=v.serial||''; $("f_status").value=v.status||'Operativo'; $("f_diagnosis").value=v.diagnosis||''; } else { $("f_id").value=''; $("f_hospitalId").value=$("hospitalSelect").value||''; $("f_marca").value=''; $("f_modelo").value=''; $("f_serial").value=''; $("f_status").value='Operativo'; $("f_diagnosis").value=''; } updateMovePermissionUI(); };
+
+    $("btnNew").onclick = ()=> window.editVent(null);
+    $("btnCancel").onclick = ()=> { $("modal").classList.add('hidden'); };
+    $("btnSave").onclick = async ()=>{ const data={ hospitalId:$("f_hospitalId").value.trim(), marca:$("f_marca").value.trim(), modelo:$("f_modelo").value.trim(), serial:$("f_serial").value.trim(), status:$("f_status").value, diagnosis:$("f_diagnosis").value.trim() }; let id=$("f_id").value.trim()||null; id = await store.saveVent(id,data); $("modal").classList.add('hidden'); };
+    $("btnDelete").onclick = async ()=>{ const id=$("f_id").value.trim(); if(!id) return $("modal").classList.add('hidden'); if(!confirm('¿Eliminar ventilador?')) return; await store.deleteVent(id); $("modal").classList.add('hidden'); };
+
+    $("btnExport").onclick = ()=>{ const headers=["ID","Hospital","Marca","Modelo","Serie","Estatus","Diagnóstico"]; const rows=ventilators.map(v=>[v.id,hospitals[v.hospitalId]||v.hospitalId,v.marca||'',v.modelo||'',v.serial||'',v.status||'',(v.diagnosis||'').replaceAll('"','""')]); const csv=[headers].concat(rows).map(r=> r.map(c=>`"${String(c??'')}"`).join(',')).join('
+'); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='ventiladores.csv'; a.click(); URL.revokeObjectURL(url); };
+
+    $("btnPdf").onclick = ()=> generatePDF(hospitalSelect.value);
+    function generatePDF(hospId){ const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'}); const margin=40; let y=margin; const hospName = hospId ? (hospitals[hospId]||hospId) : 'Todos los hospitales'; doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('IMSS-BIENESTAR · Panel de Ventiladores', margin, y); y+=18; doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.text(`Reporte por hospital: ${hospName}`, margin, y); y+=16; const list=ventilators.filter(v=>!hospId||v.hospitalId===hospId); const total=list.length, ok=list.filter(v=>v.status==='Operativo').length, nf=list.filter(v=>v.status==='No funcional').length, dg=list.filter(v=>v.status==='En diagnóstico').length; doc.setFont('helvetica','bold'); doc.text(`Totales — Equipos: ${total} · Operativos: ${ok} · No funcionales: ${nf} · En diagnóstico: ${dg}`, margin, y); y+=20; doc.setFont('helvetica','normal'); doc.setFontSize(10); const headers=['ID','Marca','Modelo','Serie','Hospital','Estatus']; const colW=[100,80,80,80,140,80]; let x=margin; headers.forEach((h,i)=>{ doc.text(h,x,y); x+=colW[i]; }); y+=12; doc.setDrawColor(200); doc.line(margin,y,555,y); y+=8; list.slice(0,120).forEach(v=>{ x=margin; const row=[v.id,v.marca||'',v.modelo||'',v.serial||'',hospitals[v.hospitalId]||v.hospitalId,v.status||'']; row.forEach((cell,i)=>{ doc.text(String(cell).slice(0,28),x,y); x+=colW[i]; }); y+=12; if(y>770){ doc.addPage(); y=margin; } }); y+=16; if(y>770){ doc.addPage(); y=margin; } doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(120); doc.text('Observación: la reubicación de equipos está restringida exclusivamente a Admin. Este reporte refleja el estado al momento de su generación.', margin, y); doc.save(`ReporteVentiladores_${hospId||'todos'}.pdf`); }
+
+    // ===== Importador Excel/CSV =====
+    function normalizeHeader(h){ const s=(h||'').toString().trim().toLowerCase(); if(/^(hospital\s*id|id\s*hospital|idhospital|hospital_key)$/.test(s)) return 'hospitalId'; if(/^(hospital|unidad|hospital\s*nombre)$/.test(s)) return 'hospitalName'; if(/^(id|ventilador\s*id)$/.test(s)) return 'id'; if(/^(marca)$/.test(s)) return 'marca'; if(/^(modelo)$/.test(s)) return 'modelo'; if(/^(serie|n[ou]\.?\s*serie|no\s*serie|n\.\s*serie|n°\s*serie)$/.test(s)) return 'serial'; if(/^(estatus|estado|status)$/.test(s)) return 'status'; if(/^(diagn[oó]stico|nota|observaci[oó]n|observaciones)$/.test(s)) return 'diagnosis'; return s; }
+    function normalizeStatus(x){ const s=(x||'').toString().trim().toLowerCase(); if(!s) return 'Operativo'; if(s.includes('oper')) return 'Operativo'; if(s.includes('no fun')||s==='fuera de servicio'||s==='baja') return 'No funcional'; if(s.includes('diag')||s.includes('revisi')) return 'En diagnóstico'; return 'Operativo'; }
+    function mapHospitalId(row){ if(row.hospitalId) return row.hospitalId; const name=(row.hospitalName||'').toString().trim().toLowerCase(); const entry=Object.entries(hospitals).find(([id,n])=> (n||'').toLowerCase()===name); return entry? entry[0] : ''; }
+    function downloadTemplate(){ const ws=XLSX.utils.aoa_to_sheet([["Hospital","HospitalId","ID","Marca","Modelo","Serie","Estatus","Diagnóstico"],["HBC El Porvenir","H01","H01-0001","MarcaX","ModeloY","SN0001","Operativo","OK"]]); const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Plantilla'); XLSX.writeFile(wb,'Plantilla_Ventiladores.xlsx'); }
+    function handleImport(){ const f=$("fileExcel").files[0]; if(!f) return alert('Selecciona un archivo .xlsx/.xls/.csv'); const reader=new FileReader(); reader.onload=async (e)=>{ try{ const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]]; const json=XLSX.utils.sheet_to_json(ws,{defval:''}); if(!json.length) return alert('El archivo no tiene filas.'); const headers=Object.keys(json[0]).map(normalizeHeader); const rows=json.map(r=>{ const obj={}; Object.entries(r).forEach(([k,v],i)=>{ obj[headers[i]||k]=v; }); return obj; }); if(Object.keys(hospitals).length===0){ const names=[...new Set(rows.map(r=> (r.hospitalName||'').toString().trim()).filter(Boolean))]; const gen=Object.fromEntries(names.map((n,idx)=>[`H${String(idx+1).padStart(2,'0')}`,n])); hospitals=gen; localStorage.setItem(LS.HOSP, JSON.stringify(hospitals)); renderHospitalsOptions(); } let created=0,updated=0,skipped=0; for(const r of rows){ const item={ hospitalId:mapHospitalId(r), marca:r.marca||'', modelo:r.modelo||'', serial:(r.serial||'').toString(), status:normalizeStatus(r.status), diagnosis:r.diagnosis||'' }; if(!item.hospitalId){ skipped++; continue; } let id=(r.id||'').toString().trim(); const exists=id && store.getVent(id); await store.saveVent(id||null,item); if(exists) updated++; else created++; } alert(`Importación completada:
+Creados: ${created}
+Actualizados: ${updated}
+Omitidos (sin hospital): ${skipped}`); }catch(err){ console.error(err); alert('No se pudo leer el archivo. Asegúrate que sea .xlsx/.xls/.csv'); } }; reader.readAsArrayBuffer(f); }
+
+    // SEED de hospitales
+    window.seedHospitals = async ()=>{ const list=[{id:'H01',name:'HBC El Porvenir'},{id:'H02',name:'HBC Las Rosas'},{id:'H03',name:'H. de la Mujer Comitán'},{id:'H04',name:'HBC Ostuacán'},{id:'H05',name:'HBC Tonalá'},{id:'H06',name:'HBC Pichucalco'},{id:'H07',name:'HBC Simojovel'},{id:'H08',name:'HBC Palenque'},{id:'H09',name:'HBC Bochil'},{id:'H10',name:'HBC Ocosingo'},{id:'H11',name:'HBC Villaflores'},{id:'H12',name:'HBC Cintalapa'},{id:'H13',name:'HBC Reforma'},{id:'H14',name:'HBC Tapachula'},{id:'H15',name:'HBC Huixtla'},{id:'H16',name:'HBC Mapastepec'},{id:'H17',name:'HBC San Cristóbal'},{id:'H18',name:'HBC Comitán'},{id:'H19',name:'HBC Motozintla'}]; if(offlineMode){ hospitals=Object.fromEntries(list.map(h=>[h.id,h.name])); localStorage.setItem(LS.HOSP, JSON.stringify(hospitals)); renderHospitalsOptions(); alert('Hospitales creados (local)'); } else { const { setDoc, doc }=store.fb; await Promise.all(list.map(h=> setDoc(doc(store.db,'hospitals',h.id), {name:h.name}) )); alert('Hospitales creados (Firebase)'); await store.loadHospitals(); } };
+
+    // PRUEBAS AUTOMÁTICAS
+    function assert(name, cond){ return { name, ok: !!cond }; }
+    function out(results){ const ok=results.filter(r=>r.ok).length; const fail=results.length-ok; $("testsOut").textContent = results.map(r=> `${r.ok?'✅':'❌'}  ${r.name}`).join("\n")+`\n\nResumen: ${ok} ok, ${fail} fallas.`; }
+    async function runTests(){ const results=[]; const backupVent=localStorage.getItem(LS.VENT); const backupMeta=localStorage.getItem(LS.USERMETA);
+      // Seed de 3
+      localStorage.setItem(LS.VENT, JSON.stringify([{id:'H01-0001',hospitalId:'H01',marca:'Maquet',modelo:'Servo',serial:'S0001',status:'Operativo',diagnosis:'OK'},{id:'H01-0002',hospitalId:'H01',marca:'Hamilton',modelo:'C2',serial:'S0002',status:'No funcional',diagnosis:'Valvula'},{id:'H02-0003',hospitalId:'H02',marca:'GE',modelo:'Engström',serial:'S0003',status:'En diagnóstico',diagnosis:'Fuga'}])); ventilators=JSON.parse(localStorage.getItem(LS.VENT)); render(); results.push(assert('Seed de 3 ventiladores', ventilators.length===3));
+      // Filtro Operativo
+      $("statusFilter").value='Operativo'; render(); results.push(assert('Filtro Operativo muestra 1 fila', tbody.querySelectorAll('tr').length===1));
+      // Alta con autogeneración de ID
+      await store.saveVent(null,{hospitalId:'H02',marca:'Draeger',modelo:'Evita',serial:'S0004',status:'Operativo',diagnosis:''});
+      ventilators=JSON.parse(localStorage.getItem(LS.VENT)); results.push(assert('Alta incrementa a 4', ventilators.length===4));
+      const recien = ventilators.find(v=> v.serial==='S0004');
+      results.push(assert('ID autogenerado con prefijo hospital', /^H02-\d{4,}$/.test(recien.id)));
+      results.push(assert('Secuencia siguiente H02-0004', recien.id==='H02-0004'));
+      // Segunda alta misma sede no colisiona
+      await store.saveVent(null,{hospitalId:'H02',marca:'Draeger',modelo:'Evita',serial:'S0005',status:'Operativo',diagnosis:''});
+      const recien2 = JSON.parse(localStorage.getItem(LS.VENT)).find(v=> v.serial==='S0005');
+      results.push(assert('IDs consecutivos no repiten', recien2.id!==recien.id));
+      // Reubicación bloqueada para hospital
+      userMeta={ role:'hospital', hospitalId:'H01' }; localStorage.setItem(LS.USERMETA, JSON.stringify(userMeta));
+      const before=JSON.parse(localStorage.getItem(LS.VENT)); await store.saveVent('H01-0001',{ ...before.find(v=>v.id==='H01-0001'), hospitalId:'H02' });
+      const after=JSON.parse(localStorage.getItem(LS.VENT)); const movedOk = after.find(v=>v.id==='H01-0001').hospitalId==='H01'; results.push(assert('Usuario hospital NO puede reubicar', movedOk));
+      // Reubicación permitida para admin
+      userMeta={ role:'admin', hospitalId:null }; localStorage.setItem(LS.USERMETA, JSON.stringify(userMeta)); await store.saveVent('H01-0001',{ ...after.find(v=>v.id==='H01-0001'), hospitalId:'H02' });
+      const afterAdmin=JSON.parse(localStorage.getItem(LS.VENT)); const movedAdmin = afterAdmin.find(v=>v.id==='H01-0001').hospitalId==='H02'; results.push(assert('Admin SÍ puede reubicar', movedAdmin));
+      // Borrado
+      await store.deleteVent('H01-0002'); const afterDel=JSON.parse(localStorage.getItem(LS.VENT)); results.push(assert('Borrar reduce cantidad', afterDel.length===4));
+      // Cola local presente
+      results.push(assert('Cola local creada', (JSON.parse(localStorage.getItem(LS.QUEUE)||'[]').length)>=1));
+      // Importación normaliza
+      const mapped=[{Hospital:'HBC El Porvenir',HospitalId:'H01',ID:'H01-0099',Marca:'Mindray',Modelo:'SV300',Serie:'SV99',Estatus:'no funcional',Diagnóstico:'Compresor'},{Hospital:'HBC Las Rosas',HospitalId:'H02',ID:'',Marca:'GE',Modelo:'Engström',Serie:'GE77',Estatus:'diagnóstico',Diagnóstico:'Revisión'}].map(r=>({ hospitalId:r.HospitalId, marca:r.Marca, modelo:r.Modelo, serial:r.Serie, status: normalizeStatus(r.Estatus), diagnosis:r.Diagnóstico })); const allNormalized = mapped.every(m=> ['Operativo','No funcional','En diagnóstico'].includes(m.status)); results.push(assert('Importación normaliza estatus', allNormalized));
+      // Restaurar
+      if(backupVent!==null) localStorage.setItem(LS.VENT, backupVent);
+      if(backupMeta!==null) localStorage.setItem(LS.USERMETA, backupMeta);
+      $("statusFilter").value=''; render(); out(results);
+    }
+    $("btnRunTests").onclick = runTests;
+  </script>
+
+  <!-- Reglas sugeridas Firestore (cuando uses Firebase) -->
+  <!--
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      match /users/{uid} { allow read: if request.auth!=null && request.auth.uid == uid; allow write: if false; }
+      match /hospitals/{id} { allow read: if true; allow write: if false; }
+      match /ventilators/{ventId} {
+        allow read: if request.time < timestamp.date(9999,1,1);
+        allow create, update, delete: if request.auth != null && (
+          request.auth.token.role == 'admin' ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'hospital' &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hospitalId == request.resource.data.hospitalId)
+        );
+      }
+    }
+  }
+  -->
+
+  <!-- Instrucciones rápidas:
+  • Funciona sin internet (modo local con localStorage). Al reconectar, usa “Sincronizar cola”.
+  • Importar Excel/CSV con cabeceras: Hospital / HospitalId / ID / Marca / Modelo / Serie / Estatus / Diagnóstico.
+  • Paleta y tipografías afines a logos (guinda, verde, oro). Pásame los HEX exactos si los quieres 1:1.
+  -->
+</body>
+</html>
